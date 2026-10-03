@@ -139,6 +139,7 @@ function registerIpc() {
           defaultScope: options.defaultScope || config.defaultScope,
           maxChars: Number(options.maxChars) || config.maxChars,
           resume: options.resume !== false,
+          sample: Number(options.sample) || 0,
         },
         onProgress,
         shouldStop: () => (runningJob ? runningJob.stopped : true),

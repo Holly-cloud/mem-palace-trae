@@ -9,6 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const { openPalace, readAllCards, writeCard, appendEvent, rebuildIndex } = require('./store');
 const { listSourceFiles, readSourceFile, chunkFile, DEFAULT_MAX_CHARS, sha1 } = require('./sources');
+const { sampleChunks } = require('./sample');
 const { extractCards } = require('./extract');
 const { resolveCandidate } = require('./resolve');
 const { todayISO } = require('./schema');
@@ -118,6 +119,22 @@ function applyDecision({ root, activeIndex, card, body, decision, stats }) {
   }
 }
 
+/** 完整模式：只列文件，分块在遍历时惰性完成（大库不会一次性读入）。 */
+function buildFullUnits(sourcePath) {
+  return listSourceFiles(sourcePath).map((file) => ({ relPath: file.relPath, file }));
+}
+
+/** 浅尝模式：散布抽样少量分块，按来源文件归组后交给同一套处理逻辑。 */
+function buildSampleUnits(sourcePath, maxChunks, maxChars) {
+  const { chunks, stats } = sampleChunks(sourcePath, { maxChunks, maxChars });
+  const byFile = new Map();
+  for (const chunk of chunks) {
+    if (!byFile.has(chunk.sourcePath)) byFile.set(chunk.sourcePath, { relPath: chunk.sourceLabel, chunks: [] });
+    byFile.get(chunk.sourcePath).chunks.push(chunk);
+  }
+  return { units: [...byFile.values()], stats };
+}
+
 /**
  * @param {object} args
  * @param {string} args.sourcePath 来源文件或目录
@@ -141,33 +158,47 @@ async function runConversion({
 
   const rootId = sha1(path.resolve(sourcePath), 12);
   const maxChars = options.maxChars || DEFAULT_MAX_CHARS;
-  const files = listSourceFiles(sourcePath);
+  const sampleCount = Number(options.sample) || 0;
+  const sampled = sampleCount > 0;
+
+  let units;
+  let sampleStats = null;
+  if (sampled) {
+    const built = buildSampleUnits(sourcePath, sampleCount, maxChars);
+    units = built.units;
+    sampleStats = built.stats;
+  } else {
+    units = buildFullUnits(sourcePath);
+  }
 
   const activeIndex = readAllCards(outputDir)
     .filter((item) => item.card.status === 'active')
     .map((item) => ({ card: item.card, body: item.body }));
 
   const stats = {
-    files: files.length, chunks: 0, skippedChunks: 0, candidates: 0,
+    sampled, files: units.length, chunks: 0, skippedChunks: 0, candidates: 0,
     added: 0, updated: 0, superseded: 0, merged: 0, escalated: 0, noop: 0,
     failed: 0, warnings: [],
   };
+  if (sampleStats) stats.sample = sampleStats;
 
-  const report = (extra) => onProgress({ stats: { ...stats }, ...extra });
-  report({ phase: 'scan', fileIndex: 0, fileTotal: files.length });
+  const report = (extra) => onProgress({ stats: { ...stats }, sampled, ...extra });
+  report({ phase: 'scan', fileIndex: 0, fileTotal: units.length });
 
-  for (let fi = 0; fi < files.length; fi += 1) {
+  for (let fi = 0; fi < units.length; fi += 1) {
     if (shouldStop()) { saveState(stateFile, state); return { stopped: true, stats, outputDir }; }
-    const file = files[fi];
-    const loaded = readSourceFile(file);
+    const unit = units[fi];
+    let chunks = unit.chunks;
 
-    if (loaded.skipped) {
-      stats.warnings.push(`${file.relPath}: ${loaded.skipped}`);
-      report({ phase: 'converting', fileIndex: fi + 1, fileTotal: files.length, fileRelPath: file.relPath });
-      continue;
+    if (!chunks) {
+      const loaded = readSourceFile(unit.file);
+      if (loaded.skipped) {
+        stats.warnings.push(`${unit.relPath}: ${loaded.skipped}`);
+        report({ phase: 'converting', fileIndex: fi + 1, fileTotal: units.length, fileRelPath: unit.relPath });
+        continue;
+      }
+      chunks = chunkFile(loaded, { maxChars });
     }
-
-    const chunks = chunkFile(loaded, { maxChars });
     for (let ci = 0; ci < chunks.length; ci += 1) {
       if (shouldStop()) { saveState(stateFile, state); return { stopped: true, stats, outputDir }; }
       const chunk = chunks[ci];
@@ -175,7 +206,7 @@ async function runConversion({
 
       if (options.resume !== false && state.chunks[key] === 'done') {
         stats.skippedChunks += 1;
-        report({ phase: 'converting', fileIndex: fi + 1, fileTotal: files.length, fileRelPath: file.relPath, chunkIndex: ci + 1, chunkTotal: chunks.length });
+        report({ phase: 'converting', fileIndex: fi + 1, fileTotal: units.length, fileRelPath: unit.relPath, chunkIndex: ci + 1, chunkTotal: chunks.length });
         continue;
       }
 
@@ -209,13 +240,13 @@ async function runConversion({
       }
 
       saveState(stateFile, state);
-      report({ phase: 'converting', fileIndex: fi + 1, fileTotal: files.length, fileRelPath: file.relPath, chunkIndex: ci + 1, chunkTotal: chunks.length });
+      report({ phase: 'converting', fileIndex: fi + 1, fileTotal: units.length, fileRelPath: unit.relPath, chunkIndex: ci + 1, chunkTotal: chunks.length });
     }
   }
 
-  report({ phase: 'indexing', fileIndex: files.length, fileTotal: files.length });
+  report({ phase: 'indexing', fileIndex: units.length, fileTotal: units.length });
   const index = rebuildIndex(outputDir, readAllCards(outputDir), { persistDecay: options.persistDecay !== false });
-  report({ phase: 'done', fileIndex: files.length, fileTotal: files.length });
+  report({ phase: 'done', fileIndex: units.length, fileTotal: units.length });
 
   return { stopped: false, stats, outputDir, catalog: index.catalogPath, health: index.healthPath, t0: index.t0 };
 }

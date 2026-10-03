@@ -127,6 +127,15 @@ input:focus, select:focus { outline: 2px solid var(--brand); outline-offset: -1p
 
 .check { display: flex; align-items: center; gap: 8px; margin: 16px 0 0; color: var(--text-muted); font-size: 12px; }
 
+.sample-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+  max-width: 520px;
+}
+.sample-row .field { flex: 1; }
+
 .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
 
 .btn {

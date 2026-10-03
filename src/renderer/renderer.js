@@ -149,7 +149,8 @@ function bindConvert() {
   el('outputDir').addEventListener('change', (e) => { state.outputDir = e.target.value.trim(); });
 
   el('auditSources').addEventListener('click', runAudit);
-  el('startConversion').addEventListener('click', startConversion);
+  el('startConversion').addEventListener('click', () => startConversion());
+  el('sampleRun').addEventListener('click', () => startConversion(Number(el('sampleSize').value) || 8));
   el('stopConversion').addEventListener('click', async () => {
     await api.stopConversion();
     toast('已请求停止，当前块处理完后会保存进度');
@@ -188,9 +189,15 @@ const STAT_DEFS = [
 
 function renderStats(stats) {
   const s = stats || {};
-  el('statGrid').innerHTML = STAT_DEFS.map(([label, key]) => (
+  let html = STAT_DEFS.map(([label, key]) => (
     `<div class="stat"><span class="label">${label}</span><span class="value">${Number(s[key]) || 0}</span></div>`
   )).join('');
+  if (s.sample) {
+    const { sampledFiles = 0, totalFiles = 0, sampledChunks = 0 } = s.sample;
+    html += `<div class="stat"><span class="label">抽样文件</span><span class="value">${sampledFiles}/${totalFiles}</span></div>`;
+    html += `<div class="stat"><span class="label">抽样分块</span><span class="value">${sampledChunks}</span></div>`;
+  }
+  el('statGrid').innerHTML = html;
 }
 
 function renderWarnings(warnings) {
@@ -218,14 +225,14 @@ function onProgress(data) {
 
   const phaseText = { scan: '扫描来源…', converting: '转换中…', indexing: '生成索引…', done: '完成' }[phase] || phase;
   el('progressText').textContent = [
-    phaseText,
+    data.sampled ? `${phaseText}（浅尝）` : phaseText,
     `文件 ${fileIndex}/${fileTotal}`,
     fileRelPath ? `· ${fileRelPath}` : '',
     chunkTotal ? `· 块 ${chunkIndex || 0}/${chunkTotal}` : '',
   ].filter(Boolean).join('　');
 }
 
-async function startConversion() {
+async function startConversion(sampleCount = 0) {
   if (state.running) return;
   const sourcePath = state.sourcePath || el('sourcePath').value.trim();
   const outputDir = state.outputDir || el('outputDir').value.trim();
@@ -241,6 +248,13 @@ async function startConversion() {
   el('progressText').textContent = '启动中…';
 
   try {
+    const options = {
+      defaultScope: state.config.defaultScope,
+      maxChars: state.config.maxChars,
+      resume: el('resume').checked,
+    };
+    if (sampleCount > 0) options.sample = sampleCount;
+
     const result = await api.startConversion({
       sourcePath,
       outputDir,
@@ -248,19 +262,24 @@ async function startConversion() {
       baseUrl: state.config.baseUrl,
       apiKey: state.config.apiKey,
       model: state.config.model,
-      options: {
-        defaultScope: state.config.defaultScope,
-        maxChars: state.config.maxChars,
-        resume: el('resume').checked,
-      },
+      options,
     });
     renderStats(result.stats);
     renderWarnings(result.stats.warnings);
     el('progressBar').style.width = '100%';
-    el('progressText').textContent = result.stopped ? '已停止（再次开始即可续跑）' : '转换完成';
-    toast(result.stopped
-      ? '已停止，进度已保存'
-      : `转换完成：新增 ${result.stats.added}，取代 ${result.stats.superseded}，待裁决 ${result.stats.escalated}`);
+
+    const s = result.stats;
+    const sample = s.sample || null;
+    if (result.stopped) {
+      el('progressText').textContent = '已停止（再次开始即可续跑）';
+      toast('已停止，进度已保存');
+    } else if (sample) {
+      el('progressText').textContent = `浅尝完成：从 ${sample.totalFiles} 个文件中抽样 ${sample.sampledFiles} 个文件 / ${sample.sampledChunks} 个样本`;
+      toast(`浅尝完成：抽样 ${sample.sampledChunks} 个样本，新增 ${s.added} 条记忆`);
+    } else {
+      el('progressText').textContent = '转换完成';
+      toast(`转换完成：新增 ${s.added}，取代 ${s.superseded}，待裁决 ${s.escalated}`);
+    }
     state.outputDir = outputDir;
     await refreshIndex();
     await refreshInbox();

@@ -91,6 +91,15 @@
         <span>断点续跑（跳过已处理的块，重复运行不产生重复记忆）</span>
       </label>
 
+      <div class="sample-row">
+        <label class="field">
+          <span>浅尝样本量（在整个记忆库中散布抽样，用于快速预览效果）</span>
+          <input id="sampleSize" type="number" min="1" max="50" step="1" value="8" />
+        </label>
+        <button class="btn" id="sampleRun">浅尝一下</button>
+      </div>
+      <p class="hint">浅尝只处理少量分散样本，写入同一个输出目录；之后完整转换会接着补全，不会重复处理。</p>
+
       <div class="actions">
         <button class="btn" id="auditSources">来源体检</button>
         <button class="btn primary" id="startConversion">开始转换</button>
