@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:" />
+  <title>Memory Palace Converter</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <h1>Memory Palace Converter</h1>
+      <p class="tagline">把异构的 agent 记忆，渐进转换为结构化「记忆宫殿」</p>
+    </div>
+    <div class="status-chip" id="statusChip">未配置 LLM</div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab is-active" data-panel="setup">设置</button>
+    <button class="tab" data-panel="convert">转换</button>
+    <button class="tab" data-panel="review">审阅 <span class="badge" id="inboxBadge">0</span></button>
+    <button class="tab" data-panel="index">索引</button>
+  </nav>
+
+  <main class="content">
+    <!-- 设置 -->
+    <section class="panel is-active" id="panel-setup">
+      <h2 class="panel-title">LLM 接入</h2>
+      <p class="hint">转换依赖 LLM 做抽取与冲突裁决。可接任意 OpenAI 兼容端点，或本地 Ollama；「离线启发式」不需要网络，仅用于演示与冒烟测试。</p>
+      <div class="form-grid">
+        <label class="field">
+          <span>Provider</span>
+          <select id="provider">
+            <option value="openai">OpenAI 兼容 API</option>
+            <option value="ollama">本地 Ollama</option>
+            <option value="mock">离线启发式（无需 LLM）</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Base URL</span>
+          <input id="baseUrl" type="text" spellcheck="false" placeholder="https://api.openai.com/v1" />
+        </label>
+        <label class="field">
+          <span>API Key</span>
+          <input id="apiKey" type="password" spellcheck="false" placeholder="sk-..." />
+        </label>
+        <label class="field">
+          <span>模型</span>
+          <input id="model" type="text" spellcheck="false" placeholder="gpt-4o-mini" />
+        </label>
+        <label class="field">
+          <span>默认作用域</span>
+          <select id="defaultScope">
+            <option value="user">user（关于用户）</option>
+            <option value="env">env（环境 / 机器）</option>
+            <option value="conventions">conventions（项目规范）</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>单块字符上限</span>
+          <input id="maxChars" type="number" min="500" max="20000" step="500" />
+        </label>
+      </div>
+      <div class="actions">
+        <button class="btn primary" id="saveConfig">保存设置</button>
+        <button class="btn" id="testLlm">测试连接</button>
+      </div>
+      <pre class="output" id="testResult" hidden></pre>
+    </section>
+
+    <!-- 转换 -->
+    <section class="panel" id="panel-convert">
+      <h2 class="panel-title">来源与输出</h2>
+      <label class="field">
+        <span>记忆来源（文件或目录，支持 md / txt / json / jsonl / yaml / csv）</span>
+        <div class="path-row">
+          <input id="sourcePath" type="text" spellcheck="false" placeholder="选择文件或目录" />
+          <button class="btn" id="pickSourceFile">选文件</button>
+          <button class="btn" id="pickSourceDir">选目录</button>
+        </div>
+      </label>
+      <label class="field">
+        <span>记忆宫殿输出目录</span>
+        <div class="path-row">
+          <input id="outputDir" type="text" spellcheck="false" placeholder="选择输出目录" />
+          <button class="btn" id="pickOutputDir">选目录</button>
+        </div>
+      </label>
+      <label class="check">
+        <input id="resume" type="checkbox" checked />
+        <span>断点续跑（跳过已处理的块，重复运行不产生重复记忆）</span>
+      </label>
+
+      <div class="actions">
+        <button class="btn" id="auditSources">来源体检</button>
+        <button class="btn primary" id="startConversion">开始转换</button>
+        <button class="btn danger" id="stopConversion" disabled>停止</button>
+      </div>
+
+      <pre class="output" id="auditResult" hidden></pre>
+
+      <div class="progress-wrap">
+        <div class="progress-track"><div class="progress-bar" id="progressBar"></div></div>
+        <p class="progress-text" id="progressText">尚未开始</p>
+      </div>
+
+      <div class="stat-grid" id="statGrid"></div>
+
+      <details class="log" id="warnBox" hidden>
+        <summary>警告与失败明细 <span id="warnCount">0</span></summary>
+        <ul id="warnings"></ul>
+      </details>
+    </section>
+
+    <!-- 审阅 -->
+    <section class="panel" id="panel-review">
+      <h2 class="panel-title">待裁决（低置信 / 冲突待确认）</h2>
+      <p class="hint">置信度低于阈值、或裁决不确定的候选会进入这里，等待你采纳或丢弃。采纳后转入正式记忆，丢弃则归档保留来源。</p>
+      <div class="actions">
+        <button class="btn" id="refreshInbox">刷新</button>
+      </div>
+      <div class="card-list" id="inboxList"></div>
+    </section>
+
+    <!-- 索引 -->
+    <section class="panel" id="panel-index">
+      <h2 class="panel-title">宫殿索引与健康</h2>
+      <div class="actions">
+        <button class="btn" id="refreshIndex">刷新</button>
+        <button class="btn" id="reindex">重建索引</button>
+        <button class="btn" id="openOutput">打开输出目录</button>
+      </div>
+      <h3 class="sub-title">常驻热索引片段（T0 · 建议写入宿主的常驻记忆文件）</h3>
+      <pre class="output" id="t0Out">—</pre>
+      <h3 class="sub-title">CATALOG.md（宫殿地图）</h3>
+      <pre class="output" id="catalogOut">—</pre>
+      <h3 class="sub-title">HEALTH.md（健康报告）</h3>
+      <pre class="output" id="healthOut">—</pre>
+    </section>
+  </main>
+
+  <div class="toast" id="toast" hidden></div>
+  <script src="renderer.js"></script>
+</body>
+</html>

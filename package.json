@@ -1,0 +1,19 @@
+{
+  "name": "mem-palace-trae",
+  "version": "0.1.0",
+  "private": true,
+  "description": "把异构的 agent 记忆渐进转换为结构化「记忆宫殿」的通用桌面工具（不绑定特定 agent）",
+  "main": "src/main/main.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Holly-cloud/mem-palace-trae.git"
+  },
+  "homepage": "https://github.com/Holly-cloud/mem-palace-trae",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "electron": "^31.2.0"
+  }
+}
